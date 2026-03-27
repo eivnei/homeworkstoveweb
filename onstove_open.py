@@ -145,13 +145,15 @@ def open_onstove():
         # JS 헬퍼 함수 정의
         js_check_mission = """
         (missionText) => {
+            const normalize = t => (t || '').replace(/\s+/g, '').toLowerCase();
+            const target = normalize(missionText);
             const elements = Array.from(document.querySelectorAll('*'));
-            const titleEls = elements.filter(el => el.textContent.trim().includes(missionText) && el.children.length === 0);
+            const titleEls = elements.filter(el => normalize(el.textContent).includes(target) && el.children.length === 0);
             if (titleEls.length === 0) return false;
             let parent = titleEls[0].parentElement;
             while (parent && parent !== document.body) {
                 const btns = Array.from(parent.querySelectorAll('button, a'));
-                const btn = btns.find(b => b.textContent.trim().includes('미션하기'));
+                const btn = btns.find(b => normalize(b.textContent).includes('미션하기'));
                 if (btn) return true;
                 parent = parent.parentElement;
             }
@@ -212,13 +214,15 @@ def open_onstove():
 
         js_click_mission = """
         (missionText) => {
+            const normalize = t => (t || '').replace(/\s+/g, '').toLowerCase();
+            const target = normalize(missionText);
             const elements = Array.from(document.querySelectorAll('*'));
-            const titleEls = elements.filter(el => el.textContent.trim().includes(missionText) && el.children.length === 0);
+            const titleEls = elements.filter(el => normalize(el.textContent).includes(target) && el.children.length === 0);
             if (titleEls.length === 0) return false;
             let parent = titleEls[0].parentElement;
             while (parent && parent !== document.body) {
                 const btns = Array.from(parent.querySelectorAll('button, a'));
-                const btn = btns.find(b => b.textContent.trim().includes('미션하기'));
+                const btn = btns.find(b => normalize(b.textContent).includes('미션하기'));
                 if (btn) {
                     btn.click();
                     return true;

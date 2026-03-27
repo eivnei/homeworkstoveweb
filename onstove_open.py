@@ -402,7 +402,287 @@ def open_onstove():
         except Exception:
             pass
 
-        print("\n모든 자동 미션 작업이 완료되었습니다.")
+        # 5. 캡슐 뽑기 미션 및 자동 뽑기
+        try:
+            print("\n>> '캡슐 뽑기' 탭으로 이동합니다...")
+            js_click_capsule_tab = r"""
+            () => {
+                const elements = Array.from(document.querySelectorAll('*'));
+                const tabs = elements.filter(el => el.textContent && el.textContent.trim() === '캡슐 뽑기' && el.children.length === 0);
+                if (tabs.length > 0) {
+                    const tab = tabs[0];
+                    let parent = tab.parentElement;
+                    while (parent && parent !== document.body) {
+                        if (parent.tagName === 'A' || parent.tagName === 'BUTTON' || parent.tagName === 'LI' || parent.getAttribute('role') === 'tab') {
+                            parent.click();
+                            return true;
+                        }
+                        parent = parent.parentElement;
+                    }
+                    tab.click();
+                    return true;
+                }
+                return false;
+            }
+            """
+            if page.evaluate(js_click_capsule_tab):
+                print(">> '캡슐 뽑기' 탭을 클릭했습니다. 3초간 로딩을 대기합니다...")
+                page.wait_for_timeout(3000)
+                
+                print(">> 자동 캡슐 뽑기(startAutoDraw100) 스크립트를 실행합니다...")
+                print(">> 브라우저 우측 하단의 알림창 및 F12(개발자 도구) 콘솔에서 결과를 확인하세요.")
+                print(">> [중단 안내] 자동 뽑기 중 화면을 클릭한 후 ESC 키를 누르면 중단됩니다.")
+                
+                js_auto_draw = r"""
+                () => {
+                    function startAutoDraw100() {
+                      let totalTries = 0;
+                      let maxTries = 30;
+                      let flakeSum = 0;
+                      const rewardMap = new Map();
+                      let isRunning = false;
+                      let stopRequested = false;
+
+                      window.addEventListener('keydown', (e) => {
+                        if (e.key === 'Escape') {
+                          stopRequested = true;
+                          console.log('⛔ ESC 키 입력 → 자동 반복 중단 요청됨');
+                        }
+                      });
+
+                      function delay(ms) {
+                        return new Promise(resolve => setTimeout(resolve, ms));
+                      }
+
+                      function getRemainingTries() {
+                        const countSpan = [...document.querySelectorAll('div.stds-box span')]
+                          .find(el => el.textContent.includes('/30회'));
+                        if (!countSpan) return { remaining: 30, used: 0 };
+
+                        const text = countSpan.textContent.trim();
+                        const match = text.match(/(\\d+)\s*\/\s*(\\d+)/);
+                        if (match) {
+                          const used = parseInt(match[1], 10);
+                          const max = parseInt(match[2], 10);
+                          return { remaining: Math.max(0, max - used), used };
+                        }
+                        return { remaining: 30, used: 0 };
+                      }
+
+                      function waitForRewardPopup(timeout = 10000) {
+                        return new Promise((resolve) => {
+                          const start = Date.now();
+                          const interval = setInterval(() => {
+                            const rewardSpan = document.querySelector('.l1l2-flakehub-popup-common-received_reward');
+                            if (rewardSpan && rewardSpan.textContent.trim()) {
+                              clearInterval(interval);
+                              resolve(true);
+                            }
+                            if (Date.now() - start > timeout) {
+                              clearInterval(interval);
+                              resolve(false);
+                            }
+                          }, 100);
+                        });
+                      }
+
+                      function collectRewardFromPopup() {
+                        const rewardSpan = document.querySelector('.l1l2-flakehub-popup-common-received_reward');
+                        if (!rewardSpan) return null;
+
+                        const rawReward = rewardSpan.textContent.trim();
+                        if (!rawReward) return null;
+
+                        const match = rawReward.match(/([\d,]+)\s*플레이크/);
+                        if (match) {
+                          const amount = parseInt(match[1].replace(/,/g, ''), 10);
+                          flakeSum += amount;
+                        } else {
+                          const prev = rewardMap.get(rawReward) || 0;
+                          rewardMap.set(rawReward, prev + 1);
+                        }
+
+                        updateRewardOverlay();
+                        return rawReward;
+                      }
+
+                      function detectFinalPopup() {
+                        const popupText = document.querySelector('.stds-dialog-panel span');
+                        return popupText?.textContent.includes('오늘 30회 뽑기 완료') || false;
+                      }
+
+                      function insertWarningInsidePopup() {
+                        if (document.querySelector('#keep-open-warning-box')) return;
+
+                        const popupPanel = document.querySelector('.stds-dialog-panel.stds-dialog-panel-sm');
+                        if (!popupPanel) return;
+
+                        const warningBox = document.createElement('div');
+                        warningBox.id = 'keep-open-warning-box';
+                        warningBox.innerHTML = `
+                          ⚠️ 끝날 때 까지 이 창을 닫지 마세요<br>
+                          ⚠️ 화면 클릭 후 ESC를 누르면 중단됩니다.
+                        `;
+                        warningBox.style.cssText = `
+                          margin-top: 1.6rem;
+                          background: #ffeb3b;
+                          color: #111;
+                          font-weight: bold;
+                          padding: 1rem 1.6rem;
+                          border-radius: 1rem;
+                          text-align: center;
+                          font-size: 1.4rem;
+                          box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+                          line-height: 1.6;
+                        `;
+                        popupPanel.appendChild(warningBox);
+                      }
+
+                      function createRewardOverlay() {
+                        if (document.querySelector('#reward-overlay')) return;
+
+                        const box = document.createElement('div');
+                        box.id = 'reward-overlay';
+                        box.style.cssText = `
+                          position: fixed;
+                          bottom: 1rem;
+                          right: 1rem;
+                          width: 260px;
+                          max-height: 60vh;
+                          overflow-y: auto;
+                          background: rgba(0, 0, 0, 0.85);
+                          color: white;
+                          padding: 1rem;
+                          border-radius: 1rem;
+                          font-size: 1.2rem;
+                          font-family: sans-serif;
+                          z-index: 99999;
+                          line-height: 1.6;
+                          box-shadow: 0 0 10px rgba(0,0,0,0.5);
+                        `;
+                        const title = document.createElement('div');
+                        title.textContent = '🎁 누적 보상';
+                        title.style.cssText = 'font-weight: bold; margin-bottom: 0.5rem;';
+                        box.appendChild(title);
+
+                        const content = document.createElement('div');
+                        content.id = 'reward-overlay-content';
+                        box.appendChild(content);
+
+                        document.body.appendChild(box);
+                      }
+
+                      function updateRewardOverlay() {
+                        const content = document.querySelector('#reward-overlay-content');
+                        if (!content) return;
+
+                        let html = `<div>✨ 플레이크: <b>${flakeSum.toLocaleString()}개</b></div>`;
+                        if (rewardMap.size > 0) {
+                          html += '<ul style="margin-top:0.5rem; padding-left:1.2rem;">';
+                          for (const [name, count] of rewardMap.entries()) {
+                            html += `<li>• ${name}: ${count}개</li>`;
+                          }
+                          html += '</ul>';
+                        } else {
+                          html += '<div>📭 기타 보상 없음</div>';
+                        }
+
+                        content.innerHTML = html;
+                      }
+
+                      function showSummary() {
+                        console.log('🎁 뽑기 결과 요약');
+                        console.log(`✨ 플레이크 총합: ${flakeSum.toLocaleString()}개`);
+                        if (rewardMap.size > 0) {
+                          console.log('📦 기타 보상 목록:');
+                          for (const [name, count] of rewardMap.entries()) {
+                            console.log(`- ${name}: ${count}개`);
+                          }
+                        } else {
+                          console.log('📦 기타 보상 없음');
+                        }
+                      }
+
+                      async function step() {
+                        if (detectFinalPopup()) {
+                          console.log('✅ "오늘 30회 뽑기 완료!" 팝업 감지됨. 자동 종료.');
+                          showSummary();
+                          isRunning = false;
+                          return;
+                        }
+
+                        if (totalTries >= maxTries || stopRequested) {
+                          console.log(`✅ 뽑기 종료. (${stopRequested ? '요청에 따라 중단됨' : '횟수 도달'})`);
+                          showSummary();
+                          isRunning = false;
+                          return;
+                        }
+
+                        let isRetry = false;
+
+                        const nextBtn = [...document.querySelectorAll('button')].find(btn => {
+                          const text = btn.innerText.trim();
+                          if (text.includes('100 뽑기 한번 더!')) {
+                            isRetry = true;
+                            return true;
+                          }
+                          return false;
+                        }) || [...document.querySelectorAll('button')].find(btn =>
+                          btn.innerText.trim().includes('100 뽑기')
+                        );
+
+                        if (!nextBtn) {
+                          console.warn('❌ 클릭할 버튼 없음. 자동 종료');
+                          showSummary();
+                          isRunning = false;
+                          return;
+                        }
+
+                        nextBtn.click();
+                        totalTries++;
+                        console.log(`🕐 [${totalTries}/30] (남은 ${30 - totalTries}회) ${isRetry ? '"100 뽑기 한번 더!"' : '"100 뽑기"'} 클릭됨 → 보상 대기 중...`);
+
+                        insertWarningInsidePopup();
+                        await delay(isRetry ? 1000 : 4000);
+                        await waitForRewardPopup();
+
+                        const rewardText = collectRewardFromPopup() || '보상 없음';
+                        console.log(`✅ [${totalTries}/30] 보상 수령 완료 → 🎁 보상: ${rewardText}`);
+
+                        setTimeout(step, 500);
+                      }
+
+                      // ▶️ 실행 시작
+                      if (isRunning) return;
+                      isRunning = true;
+
+                      const { remaining, used } = getRemainingTries();
+                      maxTries = used + remaining;
+                      totalTries = used;
+
+                      createRewardOverlay();
+                      console.log(`📊 남은 뽑기 가능 횟수: ${remaining}회 (이미 진행: ${used}회)`);
+
+                      if (remaining === 0) {
+                        console.log(`✅ 뽑기 종료. (횟수 도달)`);
+                        showSummary();
+                        isRunning = false;
+                        return;
+                      }
+
+                      step();
+                    }
+
+                    startAutoDraw100();
+                }
+                """
+                page.evaluate(js_auto_draw)
+            else:
+                print(">> '캡슐 뽑기' 탭을 찾을 수 없습니다.")
+        except Exception as e:
+            print(f"[경고] 캡슐 뽑기 자동화 중 오류 발생: {e}")
+
+        print("\n모든 자동화 로직 스크립트 실행이 끝났습니다.")
         
         # 현재 쿠키를 저장소에 명시적으로 저장
         try:

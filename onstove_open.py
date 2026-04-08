@@ -402,6 +402,101 @@ def open_onstove():
         except Exception:
             pass
 
+        # 4.5. 데일리샵 미션
+        try:
+            print("\n>> '데일리샵' 미션을 수행합니다...")
+            import datetime
+            now_ym = datetime.datetime.now().strftime("%Y%m")
+            stoveindie_url = f"https://event.onstove.com/ko/dailyshop/STOVEINDIE/{now_ym}"
+            
+            with context.expect_page(timeout=5000) as new_page_info:
+                page.evaluate(f"window.open('{stoveindie_url}', '_blank');")
+            new_page = new_page_info.value
+            
+            try:
+                new_page.wait_for_load_state("networkidle", timeout=5000)
+            except Exception:
+                pass
+            new_page.wait_for_timeout(2000)
+            
+            # 방해되는 팝업 닫기 버튼이 있을 경우 처리
+            try:
+                popup_close = new_page.locator("button.dialog-close").first
+                if popup_close.is_visible():
+                    print(">> [데일리샵] 방해되는 팝업 창(dialog-close)을 닫습니다.")
+                    popup_close.click()
+                    new_page.wait_for_timeout(1000)
+            except Exception:
+                pass
+            
+            # 모바일/PC 반응형 중 숨겨진 요소를 무시하기 위해 :visible 사용
+            try:
+                new_page.wait_for_selector("button:has-text('오늘의 아이템 받기'):visible, button:has-text('닫기'):visible", timeout=7000)
+            except Exception:
+                pass
+
+            close_btn = new_page.locator("button:has-text('닫기'):visible").first
+            item_btn = new_page.locator("button:has-text('오늘의 아이템 받기'):visible").first
+            
+            def show_alert(msg):
+                print(f">> [데일리샵] 브라우저 경고창 표시: {msg}")
+                try:
+                    new_page.once("dialog", lambda d: d.accept())
+                    new_page.evaluate(f"alert('{msg}');")
+                except Exception:
+                    pass
+
+            # 혹시라도 아래와 같은(닫기 등) 완료 상황의 버튼이 있다면
+            if close_btn.is_visible():
+                show_alert("이미 수행됨.")
+                page.bring_to_front()
+            elif item_btn.is_visible():
+                is_disabled = item_btn.evaluate("el => el.disabled || el.classList.contains('disabled')")
+                if is_disabled:
+                    show_alert("게임이 실행된 적 없음.")
+                    page.bring_to_front()
+                else:
+                    item_btn.click()
+                    new_page.wait_for_timeout(2000)
+                    
+                    # 다른 사이트로 이동
+                    riichi_url = f"https://event.onstove.com/ko/dailyshop/RIICHICITY_IND/{now_ym}"
+                    print(f">> [데일리샵] 추가 미션을 위해 {riichi_url}로 이동합니다.")
+                    new_page.goto(riichi_url)
+                    try:
+                        new_page.wait_for_load_state("networkidle", timeout=5000)
+                    except Exception:
+                        pass
+                    new_page.wait_for_timeout(2000)
+                    
+                    try:
+                        new_page.wait_for_selector("button:has-text('오늘의 아이템 받기'):visible, button:has-text('닫기'):visible", timeout=7000)
+                    except Exception:
+                        pass
+                        
+                    riichi_close = new_page.locator("button:has-text('닫기'):visible").first
+                    if riichi_close.is_visible():
+                        riichi_close.click()
+                        new_page.wait_for_timeout(1000)
+                        
+                    riichi_item = new_page.locator("button:has-text('오늘의 아이템 받기'):visible").first
+                    if riichi_item.is_visible():
+                        r_disabled = riichi_item.evaluate("el => el.disabled || el.classList.contains('disabled')")
+                        if not r_disabled:
+                            riichi_item.click()
+                            new_page.wait_for_timeout(2000)
+                    page.bring_to_front()
+            else:
+                print(">> [데일리샵] '오늘의 아이템 받기' 버튼을 찾을 수 없습니다.")
+                page.bring_to_front()
+                
+            page.wait_for_timeout(1000)
+        except Exception as e:
+            print(f"[경고] 데일리샵 방문 미션 중 오류 발생: {e}")
+            try:
+                page.bring_to_front()
+            except: pass
+
         # 5. 캡슐 뽑기 미션 및 자동 뽑기
         try:
             print("\n>> '캡슐 뽑기' 탭으로 이동합니다...")

@@ -524,6 +524,36 @@ def open_onstove():
                 print(">> '캡슐 뽑기' 탭을 클릭했습니다. 3초간 로딩을 대기합니다...")
                 page.wait_for_timeout(3000)
                 
+                print(">> 누적 달성 보상(2000, 5000, 20000 플레이크)을 확인하고 받습니다...")
+                js_receive_flake = """
+                async () => {
+                    let clicked = 0;
+                    const btns = Array.from(document.querySelectorAll('button'));
+                    const targetTexts = ['2,000', '5,000', '20,000', '2000', '5000', '20000'];
+                    for (const btn of btns) {
+                        const text = (btn.textContent || '').trim();
+                        const isTarget = targetTexts.some(t => text.includes(t)) && text.includes('플레이크 받기');
+                        if (isTarget) {
+                            if (!btn.disabled && !btn.hasAttribute('disabled')) {
+                                try {
+                                    btn.click();
+                                    clicked++;
+                                    await new Promise(r => setTimeout(r, 1500));
+                                } catch(e) {}
+                            }
+                        }
+                    }
+                    return clicked;
+                }
+                """
+                try:
+                    flake_clicks = page.evaluate(js_receive_flake)
+                    if flake_clicks > 0:
+                        print(f">> {flake_clicks}개의 누적 플레이크 보상을 수령했습니다!")
+                        page.wait_for_timeout(1000)
+                except Exception as e:
+                    print(f"[경고] 누적 플레이크 보상 수령 중 오류: {e}")
+                
                 print(">> 자동 캡슐 뽑기(startAutoDraw100) 스크립트를 실행합니다...")
                 print(">> 브라우저 우측 하단의 알림창 및 F12(개발자 도구) 콘솔에서 결과를 확인하세요.")
                 print(">> [중단 안내] 자동 뽑기 중 화면을 클릭한 후 ESC 키를 누르면 중단됩니다.")

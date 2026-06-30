@@ -233,16 +233,19 @@ def open_onstove():
         }
         """
 
-        # 1. 단순 방문형 미션 자동화 (첫 4개 '미션하기' 버튼 클릭 -> 대기 후 닫기)
+        # 1. 단순 방문형 미션 자동화 (첫 5개 '미션하기' 버튼 클릭 -> 대기 후 닫기)
         try:
             # 최소한 하나의 미션하기 버튼이 나타날 때까지 대기
-            page.wait_for_selector("button:has-text('미션하기'):visible", timeout=5000)
+            page.wait_for_selector("button:has-text('미션하기'):visible, a:has-text('미션하기'):visible", timeout=5000)
+            # 전체 버튼이 다 렌더링될 수 있도록 2초간 추가 대기 (SPA 렌더링 지연 방지)
+            page.wait_for_timeout(2000)
         except Exception:
             pass
 
         try:
-            mission_btns = page.query_selector_all("button:has-text('미션하기'):visible")
-            limit = min(4, len(mission_btns))
+            # button과 a 태그 모두 탐색
+            mission_btns = page.query_selector_all("button:has-text('미션하기'):visible, a:has-text('미션하기'):visible")
+            limit = min(5, len(mission_btns))
             print(f">> 총 {len(mission_btns)}개의 '미션하기' 버튼 중 상위 {limit}개를 순차 방문합니다.")
             
             for i in range(limit):

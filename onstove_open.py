@@ -233,21 +233,26 @@ def open_onstove():
         }
         """
 
-        # 1. 단순 방문형 미션 자동화 (새 탭 열기 -> 대기 후 닫기)
-        simple_visit_missions = [
-            "365일 특가 게임 구경하기",
-            "스토브 이벤트 구경하기",
-            "My 홈 방문하기",
-            "스토브 메인 방문하기"
-        ]
+        # 1. 단순 방문형 미션 자동화 (첫 4개 '미션하기' 버튼 클릭 -> 대기 후 닫기)
+        try:
+            # 최소한 하나의 미션하기 버튼이 나타날 때까지 대기
+            page.wait_for_selector("button:has-text('미션하기'):visible", timeout=5000)
+        except Exception:
+            pass
 
-        for mission_name in simple_visit_missions:
-            try:
-                if page.evaluate(js_check_mission, mission_name):
-                    print(f">> '{mission_name}' 미션을 수행합니다...")
+        try:
+            mission_btns = page.query_selector_all("button:has-text('미션하기'):visible")
+            limit = min(4, len(mission_btns))
+            print(f">> 총 {len(mission_btns)}개의 '미션하기' 버튼 중 상위 {limit}개를 순차 방문합니다.")
+            
+            for i in range(limit):
+                try:
+                    btn_handle = mission_btns[i]
+                    print(f">> [{i+1}/{limit}] 단순 방문 미션 실행...")
                     with context.expect_page(timeout=5000) as new_page_info:
-                        page.evaluate(js_click_mission, mission_name)
+                        btn_handle.click()
                     new_page = new_page_info.value
+                    
                     try:
                         new_page.wait_for_load_state("domcontentloaded", timeout=5000)
                     except Exception:
@@ -258,8 +263,10 @@ def open_onstove():
                     new_page.close()
                     print(">> 새 탭을 닫았습니다.")
                     page.wait_for_timeout(3000)
-            except Exception as e:
-                print(f"[경고] '{mission_name}' 미션 수행 중 오류: {e}")
+                except Exception as e:
+                    print(f"[경고] {i+1}번째 방문 미션 중 오류: {e}")
+        except Exception as e:
+            print(f"[경고] 단순 방문 미션 탐색 중 오류: {e}")
 
         # 3. 라운지 글쓰기 자동 미션
         try:

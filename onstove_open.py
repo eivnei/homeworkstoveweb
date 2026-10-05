@@ -43,6 +43,33 @@ def ensure_playwright_browsers():
             traceback.print_exc()
             raise
 
+def remove_obstructing_overlays(target_page):
+    """
+    처음 시작할 때나 페이지 이동 시 클릭을 방지하는 실시간 댓글/팝업 오버레이 레이어를 DOM에서 제거
+    """
+    try:
+        removed_count = target_page.evaluate("""
+        () => {
+            let count = 0;
+            const selectors = [
+                '[data-realtime-comment-shell]',
+                'div[data-realtime-comment-shell]',
+                'div[class*="z-[110]"]'
+            ];
+            selectors.forEach(selector => {
+                document.querySelectorAll(selector).forEach(el => {
+                    el.remove();
+                    count++;
+                });
+            });
+            return count;
+        }
+        """)
+        if removed_count > 0:
+            print(f">> [알림] 방해되는 오버레이 레이어({removed_count}개)를 제거했습니다.")
+    except Exception:
+        pass
+
 def open_onstove():
     print("\n브라우저를 실행합니다...")
     
@@ -97,6 +124,29 @@ def open_onstove():
             viewport={'width': 1280, 'height': 800},
             args=["--disable-blink-features=AutomationControlled"]
         )
+
+        # 방해되는 오버레이/댓글 쉘 자동 제거 스크립트 등록 (페이지 로드/변화 시 자동 제거)
+        context.add_init_script("""
+        (() => {
+            const removeShell = () => {
+                const selectors = [
+                    '[data-realtime-comment-shell]',
+                    'div[data-realtime-comment-shell]',
+                    'div[class*="z-[110]"]'
+                ];
+                selectors.forEach(selector => {
+                    document.querySelectorAll(selector).forEach(el => el.remove());
+                });
+            };
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', removeShell);
+            } else {
+                removeShell();
+            }
+            const observer = new MutationObserver(() => removeShell());
+            observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
+        })();
+        """)
         
         # 저장된 쿠키 불러오기
         cookies_file = os.path.join(base_dir, "cookies.json")
@@ -121,6 +171,9 @@ def open_onstove():
             page.wait_for_load_state("networkidle", timeout=5000)
         except Exception:
             pass
+
+        # 화면을 가리는 방해 오버레이 제거
+        remove_obstructing_overlays(page)
         
         # 로그인 상태 확인
         is_logged_in = page.evaluate("""
@@ -235,6 +288,7 @@ def open_onstove():
 
         # 1. 단순 방문형 미션 자동화 (첫 5개 '미션하기' 버튼 클릭 -> 대기 후 닫기)
         try:
+            remove_obstructing_overlays(page)
             # 최소한 하나의 미션하기 버튼이 나타날 때까지 대기
             page.wait_for_selector("button:has-text('미션하기'):visible, a:has-text('미션하기'):visible", timeout=5000)
             # 전체 버튼이 다 렌더링될 수 있도록 2초간 추가 대기 (SPA 렌더링 지연 방지)
@@ -243,29 +297,59 @@ def open_onstove():
             pass
 
         try:
-            # button과 a 태그 모두 탐색
-            mission_btns = page.query_selector_all("button:has-text('미션하기'):visible, a:has-text('미션하기'):visible")
-            limit = min(5, len(mission_btns))
-            print(f">> 총 {len(mission_btns)}개의 '미션하기' 버튼 중 상위 {limit}개를 순차 방문합니다.")
+            remove_obstructing_overlays(page)
+            limit = 5
+            print(f">> 상위 최대 {limit}개의 '미션하기' 버튼을 순차 방문합니다.")
             
             for i in range(limit):
                 try:
+                    remove_obstructing_overlays(page)
+                    # 매 미션 실행 전 버튼 목록 재검색 (페이지 재로드 시 stale element 예방)
+                    mission_btns = page.query_selector_all("button:has-text('미션하기'):visible, a:has-text('미션하기'):visible")
+                    if i >= len(mission_btns):
+                        print(f">> 더 이상 방문 가능한 '미션하기' 버튼이 없습니다.")
+                        break
+                    
                     btn_handle = mission_btns[i]
-                    print(f">> [{i+1}/{limit}] 단순 방문 미션 실행...")
-                    with context.expect_page(timeout=5000) as new_page_info:
-                        btn_handle.click()
-                    new_page = new_page_info.value
+                    total_count = min(limit, len(mission_btns))
+                    print(f">> [{i+1}/{total_count}] 단순 방문 미션 실행...")
                     
+                    opened_new_tab = False
+                    new_page = None
+
                     try:
-                        new_page.wait_for_load_state("domcontentloaded", timeout=5000)
+                        with context.expect_page(timeout=3000) as new_page_info:
+                            btn_handle.click()
+                        new_page = new_page_info.value
+                        if new_page and new_page != page:
+                            opened_new_tab = True
                     except Exception:
-                        pass
-                    
-                    print(">> 방문 기록 갱신을 위해 3초 대기합니다...")
-                    new_page.wait_for_timeout(3000)
-                    new_page.close()
-                    print(">> 새 탭을 닫았습니다.")
-                    page.wait_for_timeout(3000)
+                        opened_new_tab = False
+
+                    if opened_new_tab and new_page:
+                        print(">> 새 탭이 열렸습니다.")
+                        try:
+                            new_page.wait_for_load_state("domcontentloaded", timeout=5000)
+                        except Exception:
+                            pass
+                        print(">> 방문 기록 갱신을 위해 3초 대기합니다...")
+                        new_page.wait_for_timeout(3000)
+                        new_page.close()
+                        print(">> 새 탭을 닫았습니다.")
+                        page.wait_for_timeout(2000)
+                    else:
+                        # 현재 탭에서 이동한 경우
+                        print(">> 현재 탭에서 페이지가 이동되었습니다. 방문 기록 갱신을 위해 3초 대기합니다...")
+                        page.wait_for_timeout(3000)
+                        
+                        print(">> 원래 페이지(https://reward.onstove.com/ko)로 복귀합니다...")
+                        page.goto("https://reward.onstove.com/ko")
+                        try:
+                            page.wait_for_load_state("networkidle", timeout=5000)
+                        except Exception:
+                            pass
+                        remove_obstructing_overlays(page)
+                        page.wait_for_timeout(3000)
                 except Exception as e:
                     print(f"[경고] {i+1}번째 방문 미션 중 오류: {e}")
         except Exception as e:
@@ -419,6 +503,61 @@ def open_onstove():
                 except Exception:
                     pass
 
+            def process_dailyshop_modal(target_page, shop_name):
+                target_page.wait_for_timeout(1500)
+                
+                # 1. '보상받기' 버튼이 있는 경우 클릭
+                try:
+                    reward_btn = target_page.locator("button:has-text('보상받기'):visible").first
+                    if reward_btn.is_visible(timeout=2000):
+                        try:
+                            reward_btn.wait_for_element_state("enabled", timeout=3000)
+                        except Exception:
+                            pass
+                        reward_btn.click(force=True)
+                        print(f">> [데일리샵] {shop_name} '보상받기' 버튼을 클릭했습니다.")
+                        target_page.wait_for_timeout(2000)
+                except Exception:
+                    pass
+
+                # 2. '확인' 버튼이 있는 경우 클릭
+                try:
+                    confirm_btn = target_page.locator("button:has-text('확인'):visible").first
+                    if confirm_btn.is_visible(timeout=1000):
+                        confirm_btn.click(force=True)
+                        print(f">> [데일리샵] {shop_name} '확인' 버튼을 클릭했습니다.")
+                        target_page.wait_for_timeout(1000)
+                except Exception:
+                    pass
+
+                # 3. '닫기' 버튼 클릭 (stds-button stds-button-ghost 및 text '닫기' 지원)
+                try:
+                    closed = target_page.evaluate("""
+                    () => {
+                        const btns = Array.from(document.querySelectorAll('button, a'));
+                        const closeBtn = btns.find(b => {
+                            const text = b.textContent.trim();
+                            const isVisible = b.offsetWidth > 0 && b.offsetHeight > 0 || getComputedStyle(b).display !== 'none';
+                            return isVisible && (text === '닫기' || text.includes('닫기') || b.classList.contains('dialog-close'));
+                        });
+                        if (closeBtn) {
+                            closeBtn.click();
+                            return true;
+                        }
+                        return false;
+                    }
+                    """)
+                    if closed:
+                        print(f">> [데일리샵] {shop_name} '닫기' 버튼을 JS로 클릭했습니다.")
+                    else:
+                        close_locator = target_page.locator("button:has-text('닫기'):visible").first
+                        if close_locator.is_visible(timeout=2000):
+                            close_locator.click(force=True)
+                            print(f">> [데일리샵] {shop_name} '닫기' 버튼을 클릭했습니다.")
+                    target_page.wait_for_timeout(1500)
+                except Exception as e:
+                    print(f"[경고] {shop_name} 팝업 닫기 처리 중 오류: {e}")
+
             # 각 데일리샵 사이트 순차 진행
             shops = [
                 {"name": "스토브인디", "url_name": "STOVEINDIE"},
@@ -451,47 +590,26 @@ def open_onstove():
                     except Exception:
                         pass
                         
-                    close_btn = new_page.locator("button:has-text('닫기'):visible").first
                     item_btn = new_page.locator("button:has-text('오늘의 아이템 받기'):visible").first
                     
-                    if close_btn.is_visible():
-                        show_alert(f"{shop['name']}: 이미 수행됨.")
-                    elif item_btn.is_visible():
+                    if item_btn.is_visible(timeout=3000):
                         is_disabled = item_btn.evaluate("el => el.disabled || el.classList.contains('disabled')")
                         if is_disabled:
                             show_alert(f"{shop['name']}: 게임이 실행된 적 없음.")
                         else:
-                            item_btn.click()
+                            item_btn.click(force=True)
                             print(f">> [데일리샵] {shop['name']} '오늘의 아이템 받기' 클릭 완료.")
                             new_page.wait_for_timeout(2000)
                             
-                            # 보상 획득 완료 처리 (보상받기/확인/닫기 버튼 클릭)
-                            try:
-                                # 보상 팝업 내 버튼 대기
-                                new_page.wait_for_selector("button:has-text('보상받기'):visible, button:has-text('확인'):visible, button:has-text('닫기'):visible, button.dialog-close:visible", timeout=3000)
-                                
-                                reward_btn = new_page.locator("button:has-text('보상받기'):visible").first
-                                confirm_btn = new_page.locator("button:has-text('확인'):visible").first
-                                close_modal_btn = new_page.locator("button:has-text('닫기'):visible, button.dialog-close:visible").first
-                                
-                                if reward_btn.is_visible():
-                                    try:
-                                        reward_btn.wait_for_element_state("enabled", timeout=3000)
-                                    except Exception:
-                                        pass
-                                    reward_btn.click()
-                                    print(f">> [데일리샵] {shop['name']} '보상받기' 버튼을 클릭했습니다.")
-                                elif confirm_btn.is_visible():
-                                    confirm_btn.click()
-                                    print(f">> [데일리샵] {shop['name']} '확인' 버튼을 클릭했습니다.")
-                                elif close_modal_btn.is_visible():
-                                    close_modal_btn.click()
-                                    print(f">> [데일리샵] {shop['name']} '닫기' 버튼을 클릭했습니다.")
-                                new_page.wait_for_timeout(1500)
-                            except Exception:
-                                pass
+                            # 보상받기 및 팝업 닫기 전용 함수 수행
+                            process_dailyshop_modal(new_page, shop['name'])
                     else:
-                        print(f">> [데일리샵] {shop['name']} '오늘의 아이템 받기' 버튼을 찾을 수 없습니다.")
+                        close_btn = new_page.locator("button:has-text('닫기'):visible").first
+                        if close_btn.is_visible():
+                            process_dailyshop_modal(new_page, shop['name'])
+                            show_alert(f"{shop['name']}: 이미 수행됨.")
+                        else:
+                            print(f">> [데일리샵] {shop['name']} '오늘의 아이템 받기' 및 '닫기' 버튼을 찾을 수 없습니다.")
                 except Exception as e:
                     print(f"[경고] {shop['name']} 진행 중 오류 발생: {e}")
                     
